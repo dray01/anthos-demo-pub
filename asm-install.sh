@@ -27,6 +27,7 @@ gcloud services enable \
 	    meshtelemetry.googleapis.com \
 	    meshconfig.googleapis.com \
 	    iamcredentials.googleapis.com \
+		contextgraph.googleapis.com \
 	    anthos.googleapis.com
 
 # Apply mesh-id label

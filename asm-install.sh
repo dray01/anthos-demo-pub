@@ -33,19 +33,19 @@ gcloud services enable \
 # Apply mesh-id label
 echo "updating gke cluster with mesh label"
 gcloud container clusters update ${CLUSTER_NAME} \
-	  --region ${CLUSTER_LOCATION} \
+	  --region=${CLUSTER_LOCATION} \
 	  --update-labels=mesh_id=${MESH_ID} 
 
 # Enable Workload Identity 
 echo "update cluster with workload ID"
 gcloud container clusters update ${CLUSTER_NAME} \
-	  --region ${CLUSTER_LOCATION} \
+	  --region=${CLUSTER_LOCATION} \
 	  --workload-pool=${WORKLOAD_POOL}
 
 # enable Monitoring
 echo "enable stackdriver"
 gcloud container clusters update ${CLUSTER_NAME} \
-	  --region ${CLUSTER_LOCATION} \
+	  --region=${CLUSTER_LOCATION} \
 	  --enable-stackdriver-kubernetes
 
 echo "initialising SM on the project"
@@ -86,4 +86,26 @@ istioctl manifest apply --set profile=asm \
 echo "Watching istio-system for 3mins"
 wait 240
 kubectl get deployment -n istio-system
+
+echo "label default NS for istio injection"
+kubectl label namespace default istio-injection=enabled
+
+echo "downloads sample application"
+git clone https://github.com/GoogleCloudPlatform/microservices-demo.git
+
+echo "enable gcr api"
+gcloud services enable containerregistry.googleapis.com
+
+echo "deploy sample app from gcr images"
+kubectl apply -f microservices-demo/release/kubernetes-manifests.yaml
+
+echo "deploy istio manifests"
+kubectl apply -f microservices-demo/istio-manifests
+
+# Find external IP
+INGRESS_HOST="$(kubectl -n istio-system get service istio-ingressgateway \
+   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+
+echo "website is accessable on" $INGRESS_HOST
+
 

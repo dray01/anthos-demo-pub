@@ -1,0 +1,280 @@
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRole
+metadata:
+  name: promsd-istio-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  - services
+  - endpoints
+  - pods
+  - nodes/proxy
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: promsd
+  namespace: istio-system
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    addonmanager.kubernetes.io/mode: Reconcile
+    k8s-app: istio
+  name: promsd-istio-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: promsd-istio-system
+subjects:
+- kind: ServiceAccount
+  name: promsd
+  namespace: istio-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promsd
+  namespace: istio-system
+data:
+  prometheus.yml: |-
+    global:
+      scrape_interval: 15s
+    rule_files:
+    - '/etc/prometheus-rules/rules.yml'
+    scrape_configs:
+    - job_name: 'pilot'
+      # Override the global default and scrape targets from this job every 5 seconds.
+      scrape_interval: 5s
+      # metrics_path defaults to '/metrics'
+      # scheme defaults to 'http'.
+      kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+          - istio-system
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: istio-pilot;http-monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promsd-rules
+  namespace: istio-system
+data:
+  rules.yml: |-
+    groups:
+    - name: recording_rules
+      rules:
+        - record: pilot_config_push_latency
+          expr: pilot_proxy_convergence_time_bucket
+        - record: pilot_xds_push_timeouts
+          expr: pilot_xds_push_context_errors
+        - record: pilot_errors_xds
+          expr: >
+            pilot_duplicate_envoy_clusters + pilot_conflict_outbound_listener_http_over_current_tcp
+            + pilot_conflict_outbound_listener_http_over_https + pilot_conflict_outbound_listener_tcp_over_current_http
+            + pilot_conflict_outbound_listener_tcp_over_current_tcp
+            + pilot_eds_no_instances + pilot_endpoint_not_ready
+            + pilot_total_xds_internal_errors + pilot_total_xds_rejects
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promsd-sidecar
+  namespace: istio-system
+data:
+  sidecar.yml: |-
+    static_metadata:
+    - metric: pilot_xds_pushes
+      type: counter
+    - metric: pilot_config_push_latency
+      type: histogram
+    - metric: pilot_xds_push_timeouts
+      type: counter
+    - metric: pilot_errors_xds
+      type: counter
+    - metric: pilot_errors_internal
+      type: counter
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    prometheus.io/scrape: "true"
+  labels:
+    app: promsd
+  name: promsd
+  namespace: istio-system
+spec:
+  ports:
+  - name: http-prometheus
+    port: 9090
+    protocol: TCP
+  selector:
+    app: promsd
+---
+# Source: istio/charts/prometheus/templates/deployment.yaml
+# TODO: the original template has service account, roles, etc
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: promsd
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      app: promsd
+  template:
+    metadata:
+      labels:
+        app: promsd
+      annotations:
+        seccomp.security.alpha.kubernetes.io/pod: 'docker/default'
+        sidecar.istio.io/inject: "false"
+        scheduler.alpha.kubernetes.io/critical-pod: ""
+    spec:
+      serviceAccountName: promsd
+      containers:
+      - args:
+        - --prometheus.wal-directory=/data/wal
+        - --stackdriver.project-id=
+        - --stackdriver.kubernetes.location=
+        - --stackdriver.kubernetes.cluster-name=
+        - --stackdriver.use-gke-resource
+        - --stackdriver.metrics-prefix=container.googleapis.com/internal/addons/istio
+        - --config-file=/etc/prometheus-sidecar/sidecar.yml
+        - --filter=__name__=~"^(pilot_xds_pushes|pilot_xds_push_timeouts|pilot_errors_xds)$"
+        image: "{{ .Values.global.hub }}/stackdriver-prometheus-sidecar:{{ .Values.global.tag }}"
+        env:
+        - name: DEBUG
+          value: "1"
+        imagePullPolicy: Always
+        name: sidecar
+        ports:
+        - containerPort: 9091
+          name: sidecar
+          protocol: TCP
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /data
+          name: data-volume
+        - mountPath: /etc/prometheus-sidecar
+          name: static-config-volume
+      - args:
+        - --storage.tsdb.retention=6h
+        - --storage.tsdb.path=/data
+        - --storage.tsdb.min-block-duration=15m
+        - --storage.tsdb.max-block-duration=4h
+        - --config.file=/etc/prometheus/prometheus.yml
+        image: "{{ .Values.global.hub }}/prometheus:{{ .Values.global.tag }}"
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /-/healthy
+            port: 9090
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        name: promsd
+        ports:
+        - containerPort: 9090
+          name: http
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /-/ready
+            port: 9090
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /etc/prometheus
+          name: config-volume
+        - mountPath: /etc/prometheus-rules
+          name: rules-config-volume
+        - mountPath: /etc/istio-certs
+          name: istio-certs
+        - mountPath: /data
+          name: data-volume
+      volumes:
+      - configMap:
+          defaultMode: 420
+          name: promsd
+        name: config-volume
+      - configMap:
+          defaultMode: 420
+          name: promsd-rules
+        name: rules-config-volume
+      - emptyDir: {}
+        name: data-volume
+      - configMap:
+          defaultMode: 420
+          name: promsd-sidecar
+        name: static-config-volume
+      - name: istio-certs
+        secret:
+          defaultMode: 420
+          optional: true
+          secretName: istio.default
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: beta.kubernetes.io/arch
+                operator: In
+                values:
+                - amd64
+                - ppc64le
+                - s390x
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 2
+            preference:
+              matchExpressions:
+              - key: beta.kubernetes.io/arch
+                operator: In
+                values:
+                - amd64
+          - weight: 2
+            preference:
+              matchExpressions:
+              - key: beta.kubernetes.io/arch
+                operator: In
+                values:
+                - ppc64le
+          - weight: 2
+            preference:
+              matchExpressions:
+              - key: beta.kubernetes.io/arch
+                operator: In
+                values:
+                - s390x
+---

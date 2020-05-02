@@ -1,8 +1,8 @@
-folder_id = "623112070785"
-billing_account = "01227B-713A21-417139"
+folder_id = ""
+billing_account = ""
 credentials_path = ""
 default_service_account = ""
-org_id = "433637338589"
+org_id = ""
 activate_apis = [
   "compute.googleapis.com",
   "container.googleapis.com",
@@ -14,4 +14,4 @@ activate_apis = [
   "meshconfig.googleapis.com",
   "iamcredentials.googleapis.com"
 ] 
-name = "bd-terra04"
+name = ""

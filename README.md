@@ -1,7 +1,7 @@
-# anthos-demo-priv
+# anthos-demo-pub
 
 ## Intent of repo
-To provide me with a quick way to deploy a base environment that is used for customer facing demo's
+To provide a quick & repeatable way to deploy a base Anthos environment that is used for customer facing demo's
 Products to demo
 - Anthos
 - Anthos Service Mesh

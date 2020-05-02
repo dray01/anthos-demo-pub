@@ -63,11 +63,11 @@ module "gke" {
   ip_range_pods       = var.ip_range_pods_name
   ip_range_services   = var.ip_range_services_name
   service_account     = "create"
+  remove_default_node_pool = true
   node_pools = [
     {
       name            = "default-node-pool"
       machine_type    = "n1-standard-4"
-      remove_default_node_pool = true
     },
 ]
 }
